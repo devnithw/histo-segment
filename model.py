@@ -1,3 +1,4 @@
+import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -44,7 +45,6 @@ class UNetDecoder(nn.Module):
         x = self.decoder(x)
         x = self.segmentation_head(x)
         return x
-
 
 class ModaSegNet(nn.Module):
     """
@@ -121,15 +121,16 @@ class ModaSegNet(nn.Module):
         return seg_logits
 
 
+
 if __name__ == '__main__':
     # Test the model
-    model = ModaSegNet(feature_dim=512, num_classes=4, output_size=(512, 512))
+    model = SingleScaleDecoder(in_channels=512, num_classes=4, input_resolution=(512, 512))
     
     # Test with dummy input
-    dummy_features = torch.randn(2, 512)  # Batch of 2
-    output = model(dummy_features)
+    dummy = torch.randn(2, 512)  # Batch of 2
+    output = model(dummy)
     
-    print(f"Input shape: {dummy_features.shape}")
+    print(f"Input shape: {dummy.shape}")
     print(f"Output shape: {output.shape}")
     print(f"Expected output shape: [2, 4, 512, 512]")
     print(f"Model parameters: {sum(p.numel() for p in model.parameters()):,}")

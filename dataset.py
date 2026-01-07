@@ -126,7 +126,7 @@ class SICAPMultiSlideDataset(Dataset):
         return self.datasets[dataset_idx][local_idx]
 
 
-def get_available_slide_ids(features_dir):
+def get_slide_ids(features_dir):
     """
     Get all available slide IDs from the features directory.
     """

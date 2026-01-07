@@ -7,7 +7,7 @@ from pathlib import Path
 from datetime import datetime
 import matplotlib.pyplot as plt
 
-from dataset import SICAPMultiSlideDataset, get_available_slide_ids
+from dataset import SICAPMultiSlideDataset, get_slide_ids
 from model import ModaSegNet
 from engine import train, validate
 from utils import plot_losses, evaluate_metrics, print_metrics
@@ -25,7 +25,7 @@ def main():
     
     # Hyperparameters
     BATCH_SIZE = 16
-    EPOCHS = 1
+    EPOCHS = 50
     LEARNING_RATE = 1e-3
     NUM_CLASSES = 4
     FEATURE_DIM = 512
@@ -36,7 +36,7 @@ def main():
     print(f"Using device: {device}")
     
     # Get all available slide IDs
-    slide_ids = get_available_slide_ids(features_dir)
+    slide_ids = get_slide_ids(features_dir)
     print(f"Total slides: {len(slide_ids)}")
     
     # Create datasets

@@ -11,11 +11,14 @@ def train(model, dataloader, criterion, optimizer, device):
     pbar = tqdm(dataloader, desc='Training', leave=False)
     for batch in pbar:
         features = batch['features'].to(device)  # [B, 512]
+        print( features.shape)
         masks = batch['mask'].to(device)  # [B, 512, 512]
+        print( masks.shape)
         
         # Forward pass
         optimizer.zero_grad()
         outputs = model(features)  # [B, num_classes, 512, 512]
+        print(outputs.shape)
         
         # Compute loss
         loss = criterion(outputs, masks)
