@@ -9,12 +9,7 @@ from utils import remap_patch
 
 class SICAPFeatureDataset(Dataset):
     """
-    PyTorch Dataset for loading SICAP patch features and corresponding masks.
-    
-    Each sample consists of:
-    - features: Pre-extracted CONCH features from .pt files (shape: [1, 512])
-    - mask: Segmentation mask from .jpg files (shape: [512, 512])
-    - filename: Name of the patch (without extension)
+    PyTorch Dataset for loading SICAP patch features and corresponding masks for a single slide.
     """
     
     def __init__(self, slide_id, features_dir, masks_dir, transform=None):
@@ -89,7 +84,7 @@ class SICAPFeatureDataset(Dataset):
 
 class SICAPMultiSlideDataset(Dataset):
     """
-    Dataset that combines multiple slide IDs.
+    Dataset that combines multiple slides.
     """
     
     def __init__(self, slide_ids, features_dir, masks_dir, transform=None):
@@ -134,12 +129,6 @@ class SICAPMultiSlideDataset(Dataset):
 def get_available_slide_ids(features_dir):
     """
     Get all available slide IDs from the features directory.
-    
-    Args:
-        features_dir: Base directory containing feature folders
-    
-    Returns:
-        List of slide ID strings
     """
     features_path = Path(features_dir)
     slide_ids = [d.name for d in features_path.iterdir() if d.is_dir()]
@@ -153,15 +142,14 @@ if __name__ == '__main__':
     
     # Get all available slides
     slide_ids = get_available_slide_ids(features_dir)
-    print(f"Available slide IDs: {slide_ids}")
     print(f"Total slides: {len(slide_ids)}")
     
     # Test multi-slide dataset (all slides)
     dataset = SICAPMultiSlideDataset(slide_ids, features_dir, masks_dir)
-    print(f"\nTotal dataset size: {len(dataset)} patches")
+    print(f"Total dataset size: {len(dataset)} patches")
     
     # Test loading a sample
-    sample = dataset[0]
+    sample = dataset[5995]
     print(f"\nSample:")
     print(f"  Features shape: {sample['features'].shape}")
     print(f"  Mask shape: {sample['mask'].shape}")
