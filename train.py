@@ -8,7 +8,8 @@ from datetime import datetime
 import matplotlib.pyplot as plt
 
 from dataset import SICAPMultiSlideDataset, get_slide_ids
-from model import ModaSegNet
+from model import SingleScaleDecoder
+from loss import CEDiceLoss
 from engine import train, validate
 from utils import plot_losses, evaluate_metrics, print_metrics
 
@@ -18,17 +19,17 @@ run_name = f"run_{dt}"
 
 def main():
     # Configuration
-    features_dir = '/home/nadun/wd/datasets/SICAP-test/features'
+    features_dir = '/home/nadun/wd/datasets/SICAP-test/tokens'
     masks_dir = '/home/nadun/wd/datasets/SICAP-test/masks'
     checkpoint_dir = '/home/nadun/wd/segmentation/checkpoints'
     results_dir = '/home/nadun/wd/segmentation/results'
     
     # Hyperparameters
-    BATCH_SIZE = 16
-    EPOCHS = 50
+    BATCH_SIZE = 8
+    EPOCHS = 10
     LEARNING_RATE = 1e-3
     NUM_CLASSES = 4
-    FEATURE_DIM = 512
+    TOKEN_DIM = 768
     OUTPUT_SIZE = (512, 512)
     
     # Device
@@ -77,10 +78,10 @@ def main():
     
     # Create model
     print("\nInitializing model...")
-    model = ModaSegNet(
-        feature_dim=FEATURE_DIM,
+    model = SingleScaleDecoder(
+        in_channels=TOKEN_DIM,
         num_classes=NUM_CLASSES,
-        output_size=OUTPUT_SIZE
+        input_size=OUTPUT_SIZE
     )
     model = model.to(device)
     
@@ -91,7 +92,8 @@ def main():
     print(f"Trainable parameters: {num_trainable_params:,}")
     
     # Loss function and optimizer
-    criterion = nn.CrossEntropyLoss()
+    criterion = CEDiceLoss()
+    criterion = criterion.to(device)
     optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
     
     # Learning rate scheduler (Cosine Annealing)
