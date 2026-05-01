@@ -191,3 +191,23 @@ def print_metrics(metrics, class_names=None):
     print(f"\n  {'Mean IoU':15s}: {metrics['mean_iou']:.4f}")
     
     print("="*60)
+
+
+
+#can download from aws s3 cp --recursive --no-sign-request s3://camelyon-dataset/CAMELYON16/masks/ ./raw/  # 8.76GB
+
+if __name__ == "__main__":
+    # files = glob.glob("/home/nadun/wd/datasets/camelyon16/camelyon16_test/images/*.tif")
+    # xml_path = lambda file_name: f"/home/nadun/wd/datasets/camelyon16/camelyon16_test/annotations/{file_name}.xml"
+    # print(f"{len(files)} image files")
+    # for file in files[19:]:
+    #     #extract file name without extension
+    #     file_name = os.path.basename(file).split('.')[0]
+    #     annotation_file = xml_path(file_name)
+    #     if os.path.exists(annotation_file):
+    #         print(f"Processing {file_name}...")
+    #         extract_masks(file, annotation_file, f"/home/nadun/wd/datasets/camelyon16/camelyon16_test/masks/{file_name}.tif")
+    #     else:
+    #         print(f"Annotation file not found for {file_name}, skipping...")
+
+
