@@ -1,14 +1,14 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.cuda.amp import GradScaler
+from torch.amp import GradScaler
 from tqdm import tqdm
 
 def train(model, dataloader, criterion, optimizer, device):
     model.train()
     total_loss = 0.0
     num_batches = 0
-    scaler = GradScaler()
+    scaler = GradScaler('cuda')
 
     pbar = tqdm(dataloader, desc='Training', leave=False)
     for batch in pbar:

@@ -2,16 +2,17 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
-import os
+import os, glob
 from pathlib import Path
 from datetime import datetime
 import matplotlib.pyplot as plt
 
-from dataset import SICAPMultiSlideDataset, get_slide_ids
+from dataset import CAMELYON16MultiSlideDataset, get_slide_ids
 from model import SingleScaleDecoder
 from loss import CEDiceLoss
 from engine import train, validate
 from utils import plot_losses, evaluate_metrics, print_metrics
+from sklearn.model_selection import train_test_split
 
 # Set start time and run name
 dt = datetime.now().strftime("%m-%d-%H-%M")
@@ -19,16 +20,21 @@ run_name = f"run_{dt}"
 
 def main():
     # Configuration
-    features_dir = '/home/nadun/wd/datasets/SICAP-test/tokens'
-    masks_dir = '/home/nadun/wd/datasets/SICAP-test/masks'
-    checkpoint_dir = '/home/nadun/wd/segmentation/checkpoints'
-    results_dir = '/home/nadun/wd/segmentation/results'
+    train_dir = '/home/nadun/wd/datasets/camelyon16/train'
+    test_dir = '/home/nadun/wd/datasets/camelyon16/test'
+    train_feature_dir = f'{train_dir}/trident/20x_512px_0px_overlap/features_conch_v1_dual'
+    test_feature_dir = f'{test_dir}/trident/20x_512px_0px_overlap/features_conch_v1_dual'
+    train_mask_dir = f'{train_dir}/patched_masks'
+    test_mask_dir = f'{test_dir}/patched_masks'
+    checkpoint_dir = '/home/nadun/wd/segmentation/checkpoints/camelyon16'
+    results_dir = '/home/nadun/wd/segmentation/results/camelyon16'
     
     # Hyperparameters
-    BATCH_SIZE = 8
+    BATCH_SIZE = 16
     EPOCHS = 10
     LEARNING_RATE = 1e-3
-    NUM_CLASSES = 4
+    NUM_CLASSES = 3
+    NUM_WORKERS = 8
     TOKEN_DIM = 768
     OUTPUT_SIZE = (512, 512)
     
@@ -37,43 +43,67 @@ def main():
     print(f"Using device: {device}")
     
     # Get all available slide IDs
-    slide_ids = get_slide_ids(features_dir)
-    print(f"Total slides: {len(slide_ids)}")
+    val_ids = sorted(glob.glob(os.path.join(test_feature_dir, '*.h5')))
+    print(f"Total val slides: {len(val_ids)}")
+    train_ids = sorted(glob.glob(os.path.join(train_feature_dir, '*.h5')))
+    print(f"Total train slides: {len(train_ids)}")
     
-    # Create datasets
-    print("\nCreating dataset...")
-    dataset = SICAPMultiSlideDataset(
-        slide_ids=slide_ids,
-        features_dir=features_dir,
-        masks_dir=masks_dir
-    )
-    print(f"Total dataset size: {len(dataset)} patches")
+    # # Create datasets
+    # print("\nCreating dataset...")
+    # dataset = CAMELYON16MultiSlideDataset(
+    #     feature_dir=features_dir,
+    #     train=False
+    # )
+    # print(f"Total dataset size: {len(dataset)} patches")
+    # return "Dataset created successfully!"
+
+    # # Split into train/val (80/20 split)
+    # train_size = int(0.8 * len(dataset))
+    # val_size = len(dataset) - train_size
+    # train_dataset, val_dataset = torch.utils.data.random_split(
+    #     dataset, 
+    #     [train_size, val_size],
+    #     generator=torch.Generator().manual_seed(42)
+    # )
     
-    # Split into train/val (80/20 split)
-    train_size = int(0.8 * len(dataset))
-    val_size = len(dataset) - train_size
-    train_dataset, val_dataset = torch.utils.data.random_split(
-        dataset, 
-        [train_size, val_size],
-        generator=torch.Generator().manual_seed(42)
-    )
-    
-    print(f"Training set size: {len(train_dataset)} patches")
-    print(f"Validation set size: {len(val_dataset)} patches")
-    
+    # print(f"Training set size: {len(train_dataset)} patches")
+    # print(f"Validation set size: {len(val_dataset)} patches")
+
+    train_dataset = CAMELYON16MultiSlideDataset(feature_dir=train_feature_dir, mask_dir=train_mask_dir)
+    print(f"Train set size: {len(train_dataset)} patches")
+
+    test_dataset = CAMELYON16MultiSlideDataset(feature_dir=test_feature_dir, mask_dir=test_mask_dir)
+    print(f"Test set size: {len(test_dataset)} patches")
+
+    # Define subset size
+    train_subset_count = int(0.01 * len(train_dataset))
+    test_subset_count = int(0.01 * len(test_dataset))
+
+    # Generate random indices
+    train_indices = torch.randperm(len(train_dataset))[:train_subset_count]
+    test_indices = torch.randperm(len(test_dataset))[:test_subset_count]
+
+    # Create the random subsets
+    train_dataset = torch.utils.data.Subset(train_dataset, train_indices)
+    val_dataset = torch.utils.data.Subset(test_dataset, test_indices)
+    print(f"Train subset size: {len(train_dataset)} patches")
+    print(f"Val subset size: {len(val_dataset)} patches")
+
+    # train_dataset, val_dataset = torch.utils.data.random_split(test_dataset, [train_size, val_size], generator=torch.Generator().manual_seed(42))
+
     # Create dataloaders
     train_loader = DataLoader(
         train_dataset,
         batch_size=BATCH_SIZE,
         shuffle=True,
-        num_workers=1
+        num_workers=NUM_WORKERS 
     )
     
     val_loader = DataLoader(
         val_dataset,
         batch_size=BATCH_SIZE,
         shuffle=False,
-        num_workers=1
+        num_workers=NUM_WORKERS
     )
     
     # Create model
@@ -92,7 +122,7 @@ def main():
     print(f"Trainable parameters: {num_trainable_params:,}")
     
     # Loss function and optimizer
-    criterion = CEDiceLoss()
+    criterion = CEDiceLoss(num_classes=NUM_CLASSES)
     criterion = criterion.to(device)
     optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
     
@@ -156,17 +186,17 @@ def main():
     plot_losses(train_losses, val_losses, run_name, results_dir)
     
     # Evaluate segmentation metrics on validation set
-    class_names = ['NC (Class 0)', 'G3 (Class 1)', 'G4 (Class 2)', 'G5 (Class 3)']
+    class_names = ['background', 'normal_tissue', 'tumor']
     metrics = evaluate_metrics(
         model=model,
         dataloader=val_loader,
         num_classes=NUM_CLASSES,
-        device=device
+        device=device,
+        ignore_index=0
     )
     
     # Print metrics
     print_metrics(metrics, class_names=class_names)
-
 
 if __name__ == '__main__':
     main()

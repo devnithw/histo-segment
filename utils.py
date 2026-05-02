@@ -92,7 +92,7 @@ def calculate_iou(pred, target, num_classes, smooth=1e-6):
     return iou_per_class, mean_iou
 
 
-def evaluate_metrics(model, dataloader, num_classes, device='cuda'):
+def evaluate_metrics(model, dataloader, num_classes, device='cuda', ignore_index: int = 0):
     """
     Evaluate segmentation metrics (Dice and IoU) on a dataset.
     Memory-efficient version that computes metrics incrementally.
@@ -150,18 +150,28 @@ def evaluate_metrics(model, dataloader, num_classes, device='cuda'):
     # Calculate final Dice scores from accumulated statistics
     smooth = 1e-6
     dice_per_class = (2. * intersection_sum + smooth) / (pred_sum + target_sum + smooth)
-    mean_dice = dice_per_class.mean()
+    
+    if ignore_index == 0:
+        mean_dice = dice_per_class[1:].mean()
+    else:
+        mean_dice = dice_per_class.mean()
     
     # Calculate final IoU scores from accumulated statistics
     iou_per_class = (intersection_sum + smooth) / (union_sum + smooth)
-    mean_iou = iou_per_class.mean()
+
+    if ignore_index == 0:
+        mean_iou = iou_per_class[1:].mean()
+    else:
+        mean_iou = iou_per_class.mean()
     
     # Store in dictionary
     metrics = {
         'dice_per_class': dice_per_class,
         'mean_dice': mean_dice,
         'iou_per_class': iou_per_class,
-        'mean_iou': mean_iou
+        'mean_iou': mean_iou,
+        'tumor_dice': dice_per_class[2],
+        'tumor_iou': iou_per_class[2]
     }
     
     return metrics

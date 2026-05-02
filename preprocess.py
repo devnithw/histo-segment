@@ -2,6 +2,7 @@ import multiresolutionimageinterface as mir
 import numpy as np
 from collections import Counter
 import glob
+import tqdm
 
 def extract_masks(image_path, annotation_path, output_path):
     reader = mir.MultiResolutionImageReader()
@@ -41,6 +42,36 @@ def unique_values_in_mask(mask_path):
             num255s += np.sum(patch == 255)
     return num0s, num1s, num2s, num255s
 
+# map o to o, 1 to 127, 2 to 255
+def modify_mask(mask_path, save_path):
+    reader = mir.MultiResolutionImageReader()
+    img = reader.open(mask_path)
+    width, height = img.getDimensions()
+    
+    writer = mir.MultiResolutionImageWriter()
+    writer.openFile(save_path)
+    writer.setTileSize(512)
+    writer.setCompression(mir.Compression_LZW)
+    writer.setDataType(mir.DataType_UChar)
+    writer.setColorType(mir.ColorType_Monochrome)
+    writer.writeImageInformation(width, height)
+    
+    tile_size = 4096
+    for y in range(0, height, tile_size):
+        for x in range(0, width, tile_size):
+            w = min(tile_size, width - x)
+            h = min(tile_size, height - y)
+            
+            patch = img.getUCharPatch(x, y, w, h, 0)
+            patch = np.array(patch)
+            
+            patch[patch == 1] = 127
+            patch[patch == 2] = 255
+            
+            writer.writeBaseImagePartToLocation(patch.flatten(), x, y)
+    
+    writer.finishImage()
+
 import h5py, os
 from PIL import Image
 
@@ -56,7 +87,7 @@ def patchify_masks(file_path, split='train'):
     width, height = img.getDimensions()
 
     tile_size = 512
-    print(f"mask dimensions: {width}x{height}, tile size: {tile_size}x{tile_size}")
+    # print(f"mask dimensions: {width}x{height}, tile size: {tile_size}x{tile_size}")
     
     for idx, (x, y) in enumerate(coordinates):
         w = int(min(tile_size, width - x))
@@ -69,15 +100,15 @@ def patchify_masks(file_path, split='train'):
         Image.fromarray(patch).save(output_path)
 
 if __name__ == "__main__":
-    # split = 'train'
-    # file_names = glob.glob(f"/home/nadun/wd/datasets/camelyon16/{split}/images/*.tif")
-    # for file_name in file_names:
-    #     try:
-    #         patchify_masks(file_name, split=split)
-    #     except Exception as e:
-    #         print(f"Error processing {file_name}: {e}")
-    #         continue
-    # print("Done patchifying masks.")
-    mask_path = "/home/nadun/wd/datasets/camelyon16/train/masks/normal_003_mask.tif"
-    num0s, num1s, num2s, num255s = unique_values_in_mask(mask_path)
-    print(f"Unique value counts in mask: 0s={num0s}, 1s={num1s}, 2s={num2s}, 255s={num255s}")
+    split = 'train'
+    file_names = glob.glob(f"/home/nadun/wd/datasets/camelyon16/{split}/images/*.tif")
+    for file_name in tqdm.tqdm(file_names):
+        try:
+            patchify_masks(file_name, split=split)
+        except Exception as e:
+            print(f"Error processing {file_name}: {e}")
+            continue
+    print("Done patchifying masks.")
+    # mask_path = "/home/nadun/wd/datasets/camelyon16/train/masks/normal_003_mask.tif"
+    # num0s, num1s, num2s, num255s = unique_values_in_mask(mask_path)
+    # print(f"Unique value counts in mask: 0s={num0s}, 1s={num1s}, 2s={num2s}, 255s={num255s}")
