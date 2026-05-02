@@ -40,9 +40,9 @@ sys.path.insert(0, '/home/nadun/wd/CONCH')
 from conch.open_clip_custom import create_model_from_pretrained
 
 # Configuration
-TRIDENT_JOB_DIR = '/home/nadun/wd/datasets/camelyon16/camelyon16_test/trident'
-COORDS_SUBDIR   = '20x_512px_0px_overlap'
-WSI_SOURCE      = '/home/nadun/wd/datasets/camelyon16/camelyon16_test/images'
+TRIDENT_JOB_DIR = "/home/nadun/wd/datasets/camelyon16/train/trident"
+COORDS_SUBDIR   = "20x_512px_0px_overlap"
+WSI_SOURCE      = "/home/nadun/wd/datasets/camelyon16/train/images"
 WSI_EXT         = '.tif'
 
 CONCH_MODEL_CFG = 'conch_ViT-B-16'
@@ -136,9 +136,9 @@ def extract_for_slide(slide_name, model, preprocess, device):
     downsample  = level0_mag / target_mag
     n_patches   = len(coords)
 
-    print(f"\n  {slide_name}: {n_patches} patches  "
-          f"(patch_size={patch_size}, {level0_mag:.0f}x→{target_mag:.0f}x, "
-          f"ds={downsample:.1f})")
+    # print(f"\n  {slide_name}: {n_patches} patches  "
+    #       f"(patch_size={patch_size}, {level0_mag:.0f}x→{target_mag:.0f}x, "
+    #       f"ds={downsample:.1f})")
 
     dataset = WSITileDataset(
         slide=slide,
@@ -151,7 +151,7 @@ def extract_for_slide(slide_name, model, preprocess, device):
         dataset,
         batch_size=BATCH_SIZE,
         num_workers=NUM_WORKERS,
-        pin_memory=True,
+        pin_memory=False,          # pin_memory locks RAM pages — skip to save memory
         drop_last=False,
         persistent_workers=(NUM_WORKERS > 0),
         prefetch_factor=2 if NUM_WORKERS > 0 else None,
@@ -164,7 +164,7 @@ def extract_for_slide(slide_name, model, preprocess, device):
     with h5py.File(tmp_path, 'w') as f:
         ds_emb = ds_tok = ds_coords = None
 
-        for imgs, batch_coords in tqdm(dataloader, desc=f"  {slide_name}", leave=False):
+        for imgs, batch_coords in dataloader:
             imgs = imgs.to(device, non_blocking=True)
 
             # fp16 autocast — faster on Ampere+ and halves VRAM usage
@@ -230,9 +230,9 @@ def extract_for_slide(slide_name, model, preprocess, device):
     os.replace(tmp_path, out_path)
     slide.close()
 
-    print(f"  embeddings : ({written}, 512) fp16")
-    print(f"  tokens     : ({written}, {embed_d}, {grid_h}, {grid_w}) fp16")
-    print(f"  Saved → {out_path}")
+    # print(f"  embeddings : ({written}, 512) fp16")
+    # print(f"  tokens     : ({written}, {embed_d}, {grid_h}, {grid_w}) fp16")
+    # print(f"  Saved → {out_path}")
 
 def main():
     parser = argparse.ArgumentParser(
@@ -269,8 +269,8 @@ def main():
 
     model, preprocess = load_conch(DEVICE)
 
-    for i, slide_name in enumerate(slide_list, 1):
-        print(f"\n[{i}/{len(slide_list)}] {slide_name}")
+    for i, slide_name in enumerate(tqdm(slide_list, desc="Extracting CONCH embeddings")):
+        # print(f"\n[{i}/{len(slide_list)}] {slide_name}")
         try:
             extract_for_slide(slide_name, model, preprocess, DEVICE)
         except Exception as e:

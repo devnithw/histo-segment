@@ -1,63 +1,55 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from torch.cuda.amp import GradScaler
 from tqdm import tqdm
 
 def train(model, dataloader, criterion, optimizer, device):
     model.train()
     total_loss = 0.0
     num_batches = 0
-    
+    scaler = GradScaler()
+
     pbar = tqdm(dataloader, desc='Training', leave=False)
     for batch in pbar:
-        features = batch['features'].to(device)  # [B, 512]
-        masks = batch['mask'].to(device)  # [B, 512, 512]
-        
-        # Forward pass
+        tokens = batch['tokens'].to(device)   # [B, 768, 16, 16]
+        masks = batch['mask'].to(device)       # [B, 512, 512]
+
         optimizer.zero_grad()
-        outputs = model(features)  # [B, num_classes, 512, 512]
-        
-        # Compute loss
-        loss = criterion(outputs, masks)
-        
-        # Backward pass
-        loss.backward()
-        optimizer.step()
-        
-        # Track loss
+        with torch.autocast(device_type='cuda', dtype=torch.float16,
+                            enabled=(device.type == 'cuda')):
+            outputs = model(tokens)            # [B, num_classes, 512, 512]
+            loss = criterion(outputs, masks)
+
+        scaler.scale(loss).backward()
+        scaler.step(optimizer)
+        scaler.update()
+
         total_loss += loss.item()
         num_batches += 1
-        
-        # Update progress bar
         pbar.set_postfix({'loss': f'{loss.item():.4f}'})
-    
-    avg_loss = total_loss / num_batches
-    return avg_loss
+
+    return total_loss / num_batches
 
 
 def validate(model, dataloader, criterion, device):
     model.eval()
     total_loss = 0.0
     num_batches = 0
-    
+
     with torch.no_grad():
         pbar = tqdm(dataloader, desc='Validation', leave=False)
         for batch in pbar:
-            features = batch['features'].to(device)  # [B, 512]
-            masks = batch['mask'].to(device)  # [B, 512, 512]
-            
-            # Forward pass
-            outputs = model(features)  # [B, num_classes, 512, 512]
-            
-            # Compute loss
-            loss = criterion(outputs, masks)
-            
-            # Track loss
+            tokens = batch['tokens'].to(device)   # [B, 768, 16, 16]
+            masks = batch['mask'].to(device)       # [B, 512, 512]
+
+            with torch.autocast(device_type='cuda', dtype=torch.float16,
+                                enabled=(device.type == 'cuda')):
+                outputs = model(tokens)            # [B, num_classes, 512, 512]
+                loss = criterion(outputs, masks)
+
             total_loss += loss.item()
             num_batches += 1
-            
-            # Update progress bar
             pbar.set_postfix({'loss': f'{loss.item():.4f}'})
-    
-    avg_loss = total_loss / num_batches
-    return avg_loss
+
+    return total_loss / num_batches

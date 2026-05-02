@@ -4,7 +4,7 @@ import torch.nn.functional as F
 
 
 class DiceLoss(nn.Module):
-    def __init__(self, num_classes: int = 4, smooth: float = 1.0):
+    def __init__(self, num_classes: int = 2, smooth: float = 1.0):
         super().__init__()
         self.num_classes = num_classes
         self.smooth = smooth
@@ -39,7 +39,7 @@ class DiceLoss(nn.Module):
 
 
 class CEDiceLoss(nn.Module):
-    def __init__(self, num_classes: int = 4, ce_weight=1.0, dice_weight=1.0):
+    def __init__(self, num_classes: int = 2, ce_weight=1.0, dice_weight=1.0):
         super().__init__()
         self.num_classes = num_classes
         self.ce = nn.CrossEntropyLoss()
@@ -65,7 +65,7 @@ class CEDiceLoss(nn.Module):
 if __name__ == '__main__':
     # Test parameters
     batch_size = 2
-    num_classes = 4
+    num_classes = 2
     height, width = 64, 64
     
     # Create dummy data
