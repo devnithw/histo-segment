@@ -31,7 +31,8 @@ def main():
     
     # Hyperparameters
     BATCH_SIZE = 16
-    EPOCHS = 10
+    EPOCHS = 8
+    SUBSET_RATIO = 0.05
     LEARNING_RATE = 1e-3
     NUM_CLASSES = 3
     NUM_WORKERS = 8
@@ -69,42 +70,25 @@ def main():
     # print(f"Training set size: {len(train_dataset)} patches")
     # print(f"Validation set size: {len(val_dataset)} patches")
 
-    train_dataset = CAMELYON16MultiSlideDataset(feature_dir=train_feature_dir, mask_dir=train_mask_dir)
-    print(f"Train set size: {len(train_dataset)} patches")
+    train_dataset_full = CAMELYON16MultiSlideDataset(feature_dir=train_feature_dir, mask_dir=train_mask_dir)
+    print(f"Train set full size: {len(train_dataset_full)} patches")
 
-    test_dataset = CAMELYON16MultiSlideDataset(feature_dir=test_feature_dir, mask_dir=test_mask_dir)
-    print(f"Test set size: {len(test_dataset)} patches")
+    test_dataset_full = CAMELYON16MultiSlideDataset(feature_dir=test_feature_dir, mask_dir=test_mask_dir)
+    print(f"Test set full size: {len(test_dataset_full)} patches")
 
     # Define subset size
-    train_subset_count = int(0.01 * len(train_dataset))
-    test_subset_count = int(0.01 * len(test_dataset))
+    train_subset_count = int(SUBSET_RATIO * len(train_dataset_full))
+    test_subset_count = int(SUBSET_RATIO * len(test_dataset_full))
 
-    # Generate random indices
-    train_indices = torch.randperm(len(train_dataset))[:train_subset_count]
-    test_indices = torch.randperm(len(test_dataset))[:test_subset_count]
-
-    # Create the random subsets
-    train_dataset = torch.utils.data.Subset(train_dataset, train_indices)
-    val_dataset = torch.utils.data.Subset(test_dataset, test_indices)
-    print(f"Train subset size: {len(train_dataset)} patches")
-    print(f"Val subset size: {len(val_dataset)} patches")
-
-    # train_dataset, val_dataset = torch.utils.data.random_split(test_dataset, [train_size, val_size], generator=torch.Generator().manual_seed(42))
-
-    # Create dataloaders
-    train_loader = DataLoader(
-        train_dataset,
-        batch_size=BATCH_SIZE,
-        shuffle=True,
-        num_workers=NUM_WORKERS 
-    )
+    # Resample subsets for this epoch
+    train_indices = torch.randperm(len(train_dataset_full))[:train_subset_count]
+    test_indices = torch.randperm(len(test_dataset_full))[:test_subset_count]
     
-    val_loader = DataLoader(
-        val_dataset,
-        batch_size=BATCH_SIZE,
-        shuffle=False,
-        num_workers=NUM_WORKERS
-    )
+    train_dataset = torch.utils.data.Subset(train_dataset_full, train_indices)
+    val_dataset = torch.utils.data.Subset(test_dataset_full, test_indices)
+
+    print(f"Training subset size: {len(train_dataset)} patches")
+    print(f"Validation subset size: {len(val_dataset)} patches")
     
     # Create model
     print("\nInitializing model...")
@@ -148,6 +132,27 @@ def main():
     for epoch in range(EPOCHS):
         print(f"\nEpoch {epoch+1}/{EPOCHS}")
         print("-" * 60)
+        
+        # Resample subsets for this epoch
+        train_indices = torch.randperm(len(train_dataset_full))[:train_subset_count]
+        test_indices = torch.randperm(len(test_dataset_full))[:test_subset_count]
+        
+        train_dataset = torch.utils.data.Subset(train_dataset_full, train_indices)
+        val_dataset = torch.utils.data.Subset(test_dataset_full, test_indices)
+        
+        train_loader = DataLoader(
+            train_dataset,
+            batch_size=BATCH_SIZE,
+            shuffle=True,
+            num_workers=NUM_WORKERS 
+        )
+        
+        val_loader = DataLoader(
+            val_dataset,
+            batch_size=BATCH_SIZE,
+            shuffle=False,
+            num_workers=NUM_WORKERS
+        )
         
         # Train
         train_loss = train(model, train_loader, criterion, optimizer, device)

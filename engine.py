@@ -10,7 +10,7 @@ def train(model, dataloader, criterion, optimizer, device):
     num_batches = 0
     scaler = GradScaler('cuda')
 
-    pbar = tqdm(dataloader, desc='Training', leave=False)
+    pbar = tqdm(dataloader, desc='Training', leave=False, dynamic_ncols=True, mininterval=1.0)
     for batch in pbar:
         tokens = batch['tokens'].to(device)   # [B, 768, 16, 16]
         masks = batch['mask'].to(device)       # [B, 512, 512]
@@ -38,7 +38,7 @@ def validate(model, dataloader, criterion, device):
     num_batches = 0
 
     with torch.no_grad():
-        pbar = tqdm(dataloader, desc='Validation', leave=False)
+        pbar = tqdm(dataloader, desc='Validation', leave=False, dynamic_ncols=True, mininterval=1.0)
         for batch in pbar:
             tokens = batch['tokens'].to(device)   # [B, 768, 16, 16]
             masks = batch['mask'].to(device)       # [B, 512, 512]
