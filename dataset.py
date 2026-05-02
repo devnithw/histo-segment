@@ -4,7 +4,9 @@ import torch
 from torch.utils.data import Dataset
 from PIL import Image
 import h5py
+import torchvision
 import numpy as np
+import glob
 # from utils import remap_patch
 
 
@@ -132,27 +134,28 @@ class CAMELYON16_Slide_Dataset(Dataset):
     Patch-level dataset for a single CAMELYON16 slide stored in a dual-feature h5 file.
 
     Each __getitem__ returns one patch, matching the SICAPFeatureDataset contract:
-        'features'  : torch.Tensor [512]           pooled 1D embedding (float32)
-        'tokens'    : torch.Tensor [768, 16, 16]   2D visual tokens    (float32)
-        'mask'      : torch.Tensor [16, 16]        placeholder (all -1) until masks are ready
-        'filename'  : str                          "<slide_id>_patch_<idx>"
-        'slide_id'  : str                          slide name (no .h5 extension)
-        'coords'    : torch.Tensor [2]             (x, y) level-0 coordinates (int64)
+        'features'  : torch.Tensor [512]           – pooled 1D embedding (float32)
+        'tokens'    : torch.Tensor [768, 16, 16]   – 2D visual tokens    (float32)
+        'mask'      : torch.Tensor [512, 512]         – placeholder (all -1) until masks are ready
+        'filename'  : str                           – "<slide_id>_patch_<idx>"
+        'slide_id'  : str                           – slide name (no .h5 extension)
+        'coords'    : torch.Tensor [2]              – (x, y) level-0 coordinates (int64)
     """
 
-    def __init__(self, h5_path, transform=None):
+    def __init__(self, h5_path, mask_dir ,transform=None):
         """
         Args:
             h5_path: Path to the slide's .h5 feature file.
             transform: Optional transform applied to the mask tensor.
         """
+        self.mask_dir  = mask_dir
         self.h5_path   = Path(h5_path)
         self.slide_id  = self.h5_path.stem
-        self.transform = transform
+        self.transform = torchvision.transforms.Compose(transform) if transform else None
 
         # Read patch count without loading data
         with h5py.File(self.h5_path, 'r') as f:
-            self.n_patches = f['embeddings'].shape[0]
+            self.n_patches = f['tokens'].shape[0]
 
     def __len__(self):
         return self.n_patches
@@ -164,11 +167,10 @@ class CAMELYON16_Slide_Dataset(Dataset):
             tokens   = torch.from_numpy(f['tokens'][idx].astype(np.float32))      # [768, 16, 16]
             coords   = torch.from_numpy(f['coords'][idx])                          # [2]
 
-        # Placeholder mask — replace once ground-truth masks are available
-        mask = torch.full((tokens.shape[-2], tokens.shape[-1]), -1, dtype=torch.long)
-
-        if self.transform:
-            mask = self.transform(mask)
+        img = Image.open(f"{self.mask_dir}/{self.slide_id}/{idx}_{coords[0]}_{coords[1]}.png")
+        mask = np.array(img, dtype=np.int64)  # Convert to numpy array
+        mask = torch.from_numpy(mask)  # Convert to tensor
+ 
 
         return {
             'features': features,                            # [512]         float32
@@ -186,13 +188,17 @@ class CAMELYON16MultiSlideDataset(Dataset):
     patch-level dataset, mirroring SICAPMultiSlideDataset.
     """
 
-    def __init__(self, feature_dir, transform=None):
+    def __init__(self, feature_dir, mask_dir, transform=None):
         """
         Args:
             feature_dir: Directory containing per-slide .h5 files.
+            mask_dir: Directory containing per-slide mask files.
             transform: Optional transform forwarded to each slide dataset.
         """
-        h5_files = sorted(Path(feature_dir).glob('*.h5'))
+        self.mask_dir = mask_dir
+        self.feature_dir = feature_dir
+        h5_files = sorted([os.path.join(self.feature_dir, f) for f in os.listdir(self.feature_dir) if f.endswith('.h5')])
+        print(f"Found {len(h5_files)} .h5 files in {feature_dir}")
         if not h5_files:
             raise ValueError(f"No .h5 files found in {feature_dir}")
 
@@ -200,7 +206,7 @@ class CAMELYON16MultiSlideDataset(Dataset):
         self.cumulative_sizes = [0]
 
         for h5_path in h5_files:
-            ds = CAMELYON16_Slide_Dataset(h5_path, transform)
+            ds = CAMELYON16_Slide_Dataset(h5_path, mask_dir=self.mask_dir, transform=transform)
             self.datasets.append(ds)
             self.cumulative_sizes.append(self.cumulative_sizes[-1] + len(ds))
 
@@ -236,14 +242,19 @@ def get_slide_ids(features_dir):
 
 
 if __name__ == '__main__':
-    feature_dir = "/home/nadun/wd/datasets/camelyon16/test/trident/20x_512px_0px_overlap/features_conch_v1_dual"
+    test_dir = "/home/nadun/wd/datasets/camelyon16"
+    test_feature_dir = "/home/nadun/wd/datasets/camelyon16/test/trident/20x_512px_0px_overlap/features_conch_v1_dual"
+    test_mask_dir = "/home/nadun/wd/datasets/camelyon16/test/patched_masks"
+    train_dir = "/home/nadun/wd/datasets/camelyon16/train"
+    train_feature_dir = "/home/nadun/wd/datasets/camelyon16/train/trident/20x_512px_0px_overlap/features_conch_v1_dual"
+    train_mask_dir = "/home/nadun/wd/datasets/camelyon16/train/patched_masks"
 
     # Test single-slide dataset
-    import glob
-    h5_files = sorted(glob.glob(f"{feature_dir}/*.h5"))
+    
+    h5_files = sorted(glob.glob(f"{train_feature_dir}/*.h5"))
     print(f"Found {len(h5_files)} slides")
 
-    slide_ds = CAMELYON16_Slide_Dataset(h5_files[0])
+    slide_ds = CAMELYON16_Slide_Dataset(h5_files[0], mask_dir=train_mask_dir)
     print(f"\nSingle slide: {slide_ds.slide_id}  ({len(slide_ds)} patches)")
     sample = slide_ds[0]
     print(f"  features : {sample['features'].shape}  {sample['features'].dtype}")
@@ -254,8 +265,11 @@ if __name__ == '__main__':
     print(f"  coords   : {sample['coords']}")
 
     # Test multi-slide dataset
-    multi_ds = CAMELYON16MultiSlideDataset(feature_dir)
+    multi_ds = CAMELYON16MultiSlideDataset(feature_dir=train_feature_dir, mask_dir=train_mask_dir)
     print(f"\nMulti-slide total patches: {len(multi_ds)}")
     sample2 = multi_ds[0]
+    sample3 = multi_ds[len(slide_ds)]  # First patch of second slide
     print(f"  features : {sample2['features'].shape}")
     print(f"  slide_id : {sample2['slide_id']}")
+    print(f"  features : {sample3['features'].shape}")
+    print(f"  slide_id : {sample3['slide_id']}")

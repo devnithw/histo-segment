@@ -44,11 +44,11 @@ def unique_values_in_mask(mask_path):
 import h5py, os
 from PIL import Image
 
-def patchify_masks(file_path):
+def patchify_masks(file_path, split='train'):
     file_name = os.path.basename(file_path).split('.')[0]
-    coord_path = f"/home/nadun/wd/datasets/camelyon16/test/trident/20x_512px_0px_overlap/features_conch_v1_dual/{file_name}.h5"
-    mask_path = f"/home/nadun/wd/datasets/camelyon16/test/masks/{file_name}_mask.tif"
-    os.makedirs(f"/home/nadun/wd/datasets/camelyon16/test/patched_masks/{file_name}", exist_ok=True)
+    coord_path = f"/home/nadun/wd/datasets/camelyon16/{split}/trident/20x_512px_0px_overlap/features_conch_v1_dual/{file_name}.h5"
+    mask_path = f"/home/nadun/wd/datasets/camelyon16/{split}/masks/{file_name}_mask.tif"
+    os.makedirs(f"/home/nadun/wd/datasets/camelyon16/{split}/patched_masks/{file_name}", exist_ok=True)
     coordinates = h5py.File(coord_path, 'r')['coords'][:]
     
     reader = mir.MultiResolutionImageReader()
@@ -65,15 +65,19 @@ def patchify_masks(file_path):
         patch = img.getUCharPatch(int(x), int(y), w, h, 0)  # level 0
         patch = np.array(patch).reshape((h, w))
         
-        output_path = f"/home/nadun/wd/datasets/camelyon16/test/patched_masks/{file_name}/{idx}_{x}_{y}.png"
+        output_path = f"/home/nadun/wd/datasets/camelyon16/{split}/patched_masks/{file_name}/{idx}_{x}_{y}.png"
         Image.fromarray(patch).save(output_path)
 
 if __name__ == "__main__":
-    file_names = glob.glob("/home/nadun/wd/datasets/camelyon16/test/images/*.tif")
-    for file_name in file_names:
-        try:
-            patchify_masks(file_name)
-        except Exception as e:
-            print(f"Error processing {file_name}: {e}")
-            continue
-    print("Done patchifying masks.")
+    # split = 'train'
+    # file_names = glob.glob(f"/home/nadun/wd/datasets/camelyon16/{split}/images/*.tif")
+    # for file_name in file_names:
+    #     try:
+    #         patchify_masks(file_name, split=split)
+    #     except Exception as e:
+    #         print(f"Error processing {file_name}: {e}")
+    #         continue
+    # print("Done patchifying masks.")
+    mask_path = "/home/nadun/wd/datasets/camelyon16/train/masks/normal_003_mask.tif"
+    num0s, num1s, num2s, num255s = unique_values_in_mask(mask_path)
+    print(f"Unique value counts in mask: 0s={num0s}, 1s={num1s}, 2s={num2s}, 255s={num255s}")
