@@ -14,9 +14,9 @@ from engine import train, validate
 from utils import plot_losses, evaluate_metrics, print_metrics
 from sklearn.model_selection import train_test_split
 
-# Set start time and run name
+# Set start time and base run name
 dt = datetime.now().strftime("%m-%d-%H-%M")
-run_name = f"run_{dt}"
+base_run_name = f"run_{dt}"
 
 def main():
     # Configuration
@@ -26,13 +26,14 @@ def main():
     test_feature_dir = f'{test_dir}/trident/20x_512px_0px_overlap/features_conch_v1_dual'
     train_mask_dir = f'{train_dir}/patched_masks'
     test_mask_dir = f'{test_dir}/patched_masks'
-    checkpoint_dir = '/home/nadun/wd/segmentation/checkpoints/camelyon16'
+    base_checkpoint_dir = '/home/nadun/wd/segmentation/checkpoints/camelyon16'
     results_dir = '/home/nadun/wd/segmentation/results/camelyon16'
     
     # Hyperparameters
     BATCH_SIZE = 16
     EPOCHS = 8
-    SUBSET_RATIO = 0.05
+    TRAIN_SUBSET_RATIO = 0.0001 #0.05
+    TEST_SUBSET_RATIO = 0.01
     LEARNING_RATE = 1e-3
     NUM_CLASSES = 3
     NUM_WORKERS = 8
@@ -77,8 +78,8 @@ def main():
     print(f"Test set full size: {len(test_dataset_full)} patches")
 
     # Define subset size
-    train_subset_count = int(SUBSET_RATIO * len(train_dataset_full))
-    test_subset_count = int(SUBSET_RATIO * len(test_dataset_full))
+    train_subset_count = int(TRAIN_SUBSET_RATIO * len(train_dataset_full))
+    test_subset_count = int(TEST_SUBSET_RATIO * len(test_dataset_full))
 
     # Resample subsets for this epoch
     train_indices = torch.randperm(len(train_dataset_full))[:train_subset_count]
@@ -117,8 +118,11 @@ def main():
         eta_min=1e-6
     )
     
-    # Create checkpoint directory
+    # Create run-specific checkpoint directory with args in name
+    run_name = f"{base_run_name}_bs{BATCH_SIZE}_ep{EPOCHS}_lr{LEARNING_RATE}"
+    checkpoint_dir = os.path.join(base_checkpoint_dir, run_name)
     Path(checkpoint_dir).mkdir(parents=True, exist_ok=True)
+    print(f"\nCheckpoints will be saved to: {checkpoint_dir}")
     
     # Training loop
     print("\n" + "="*60)
@@ -172,15 +176,26 @@ def main():
         # Save best model
         if val_loss < best_val_loss:
             best_val_loss = val_loss
-            checkpoint_path = os.path.join(checkpoint_dir, f'{run_name}_best_model.pth')
+            best_checkpoint_path = os.path.join(checkpoint_dir, 'best_model.pth')
             torch.save({
                 'epoch': epoch,
                 'model_state_dict': model.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(),
                 'train_loss': train_loss,
                 'val_loss': val_loss,
-            }, checkpoint_path)
+            }, best_checkpoint_path)
             print(f"Saved best model (val_loss: {val_loss:.4f})")
+            
+        # Save model after each epoch
+        epoch_checkpoint_path = os.path.join(checkpoint_dir, f'epoch_{epoch+1}.pth')
+        torch.save({
+            'epoch': epoch,
+            'model_state_dict': model.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict(),
+            'train_loss': train_loss,
+            'val_loss': val_loss,
+        }, epoch_checkpoint_path)
+        print(f"Saved epoch {epoch+1} checkpoint.")
     
     print("\n" + "="*60)
     print("Training complete!")

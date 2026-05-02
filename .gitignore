@@ -1,3 +1,6 @@
 /__pycache__
 /checkpoints
 /results
+/inference_results
+*.png
+*.tif

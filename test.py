@@ -1,94 +1,208 @@
-import os
-from pathlib import Path
 import torch
-from torch.utils.data import Dataset
-from PIL import Image
-import numpy as np
-import h5py
+import torch.nn as nn
+import torch.optim as optim
+from torch.utils.data import DataLoader
+import os, glob
+from pathlib import Path
+from datetime import datetime
+import matplotlib.pyplot as plt
 
-test_data_path = "/home/nadun/wd/datasets/camelyon16/test/trident/20x_512px_0px_overlap/features_conch_v1_dual"
+from dataset import CAMELYON16MultiSlideDataset, get_slide_ids
+from model import SingleScaleDecoder
+from loss import CEDiceLoss
+from engine import train, validate
+from utils import plot_losses, evaluate_metrics, print_metrics
+from sklearn.model_selection import train_test_split
 
-test_imgs = os.listdir(test_data_path)
-print(f"length of test images: {len(test_imgs)}")
-test_imgs = [img for img in test_imgs if img[-3:] == ".h5"]
-print(f"length of complete test images: {len(test_imgs)}")
+# Set start time and run name
+dt = datetime.now().strftime("%m-%d-%H-%M")
+run_name = f"run_{dt}"
 
-count = 0
-for img in test_imgs:
-    img_path = os.path.join(test_data_path, img)
-    with h5py.File(img_path, 'r') as f:
-        print("keys:", f.keys())
-        print(f"coords shape: {f['coords'].shape}")
-        print(f"embeddings shape: {f['embeddings'].shape}")
-        print(f"tokens shape: {f['tokens'].shape}")
-        print(f"coords dtype: {f['coords'].dtype}")
-        print(f"embeddings dtype: {f['embeddings'].dtype}")
-        print(f"tokens dtype: {f['tokens'].dtype}")
-        print(f"coords: {f['coords']}")
+def main():
+    # Configuration
+    train_dir = '/home/nadun/wd/datasets/camelyon16/train'
+    test_dir = '/home/nadun/wd/datasets/camelyon16/test'
+    train_feature_dir = f'{train_dir}/trident/20x_512px_0px_overlap/features_conch_v1_dual'
+    test_feature_dir = f'{test_dir}/trident/20x_512px_0px_overlap/features_conch_v1_dual'
+    train_mask_dir = f'{train_dir}/patched_masks'
+    test_mask_dir = f'{test_dir}/patched_masks'
+    checkpoint_dir = '/home/nadun/wd/segmentation/checkpoints/camelyon16'
+    results_dir = '/home/nadun/wd/segmentation/results/camelyon16'
     
-    break
-
-class CAMELYON16Dataset(Dataset):
-    def __init__(self, dataset_dir, transform=None, feature_dir="/home/nadun/wd/datasets/camelyon16/test/trident/20x_512px_0px_overlap/features_conch_v1_dual"):
-        self.dataset_dir = Path(dataset_dir)
-        self.image_dir = self.dataset_dir / "images"
-        self.mask_dir = self.dataset_dir / "masks"
-        self.feature_dir = feature_dir
-        self.transform = transform
-        self.feature_files = sorted([f for f in os.listdir(self.feature_dir) if f[-3:] == ".h5"])
-
-    def _verify_masks(self):
-        """Verify that all feature files have corresponding mask files."""
-        for feat_path in self.feature_files:
-            pass
-            # mask_path = self.masks_dir / f"{feat_path.stem}.jpg"
-            # if not mask_path.exists():
-            #     raise FileNotFoundError(f"Mask file not found: {mask_path}")
-
-    def __len__(self):
-        return len(self.feature_files)
+    # Hyperparameters
+    BATCH_SIZE = 1
+    EPOCHS = 1
+    TRAIN_SUBSET_RATIO = 0.0001
+    TEST_SUBSET_RATIO = 0.0001
+    LEARNING_RATE = 1e-3
+    NUM_CLASSES = 3
+    NUM_WORKERS = 2
+    TOKEN_DIM = 768
+    OUTPUT_SIZE = (512, 512)
     
-    def __getitem__(self, idx):
-        """
-        Get a single sample.
+    # Device
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    print(f"Using device: {device}")
+    
+    # Get all available slide IDs
+    val_ids = sorted(glob.glob(os.path.join(test_feature_dir, '*.h5')))
+    print(f"Total val slides: {len(val_ids)}")
+    train_ids = sorted(glob.glob(os.path.join(train_feature_dir, '*.h5')))
+    print(f"Total train slides: {len(train_ids)}")
+    
+    # # Create datasets
+    # print("\nCreating dataset...")
+    # dataset = CAMELYON16MultiSlideDataset(
+    #     feature_dir=features_dir,
+    #     train=False
+    # )
+    # print(f"Total dataset size: {len(dataset)} patches")
+    # return "Dataset created successfully!"
+
+    # # Split into train/val (80/20 split)
+    # train_size = int(0.8 * len(dataset))
+    # val_size = len(dataset) - train_size
+    # train_dataset, val_dataset = torch.utils.data.random_split(
+    #     dataset, 
+    #     [train_size, val_size],
+    #     generator=torch.Generator().manual_seed(42)
+    # )
+    
+    # print(f"Training set size: {len(train_dataset)} patches")
+    # print(f"Validation set size: {len(val_dataset)} patches")
+
+    train_dataset_full = CAMELYON16MultiSlideDataset(feature_dir=train_feature_dir, mask_dir=train_mask_dir)
+    print(f"Train set full size: {len(train_dataset_full)} patches")
+
+    test_dataset_full = CAMELYON16MultiSlideDataset(feature_dir=test_feature_dir, mask_dir=test_mask_dir)
+    print(f"Test set full size: {len(test_dataset_full)} patches")
+
+    # Define subset size
+    train_subset_count = int(TRAIN_SUBSET_RATIO * len(train_dataset_full))
+    test_subset_count = int(TEST_SUBSET_RATIO * len(test_dataset_full))
+
+    # Resample subsets for this epoch
+    train_indices = torch.randperm(len(train_dataset_full))[:train_subset_count]
+    test_indices = torch.randperm(len(test_dataset_full))[:test_subset_count]
+    
+    train_dataset = torch.utils.data.Subset(train_dataset_full, train_indices)
+    val_dataset = torch.utils.data.Subset(test_dataset_full, test_indices)
+
+    print(f"Training subset size: {len(train_dataset)} patches")
+    print(f"Validation subset size: {len(val_dataset)} patches")
+    
+    # Create model
+    print("\nInitializing model...")
+    model = SingleScaleDecoder(
+        in_channels=TOKEN_DIM,
+        num_classes=NUM_CLASSES,
+        input_size=OUTPUT_SIZE
+    )
+    model = model.to(device)
+    
+    # Count parameters
+    num_params = sum(p.numel() for p in model.parameters())
+    num_trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    print(f"Total parameters: {num_params:,}")
+    print(f"Trainable parameters: {num_trainable_params:,}")
+    
+    # Loss function and optimizer
+    criterion = CEDiceLoss(num_classes=NUM_CLASSES)
+    criterion = criterion.to(device)
+    optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
+    
+    # Learning rate scheduler (Cosine Annealing)
+    scheduler = optim.lr_scheduler.CosineAnnealingLR(
+        optimizer,
+        T_max=EPOCHS,
+        eta_min=1e-6
+    )
+    
+    # Create checkpoint directory
+    Path(checkpoint_dir).mkdir(parents=True, exist_ok=True)
+    
+    # Training loop
+    print("\n" + "="*60)
+    print("Starting training...")
+    print("="*60)
+    
+    best_val_loss = float('inf')
+    train_losses = []
+    val_losses = []
+    
+    for epoch in range(EPOCHS):
+        print(f"\nEpoch {epoch+1}/{EPOCHS}")
+        print("-" * 60)
         
-        Returns:
-            dict with keys:
-                - 'features': torch.Tensor of shape [512] (squeezed from [1, 512])
-                - 'mask': torch.Tensor of shape [512, 512]
-                - 'filename': str, name of the patch
-                - 'slide_id': str, slide ID for stitching later
-        """
-        # Load feature
-        feat_slide_name = self.feature_files[idx]
-        feat_path = os.path.join(self.feature_dir, feat_slide_name)
+        # Resample subsets for this epoch
+        train_indices = torch.randperm(len(train_dataset_full))[:train_subset_count]
+        test_indices = torch.randperm(len(test_dataset_full))[:test_subset_count]
         
-        with h5py.File(feat_path, 'r') as wsi:
-            patch_coords = wsi['coords'][:]  # [num_patches, 2]
-            patch_embeddings = wsi['embeddings'][:]  # [num_patches, 512]
-            patch_tokens = wsi['tokens'][:]  # [num_patches, 768, 16, 16]
-
-        # Load masks
-        # TO be comopleted
-
-        if self.transform:
-            patch_embeddings = self.transform(patch_embeddings)
-            patch_tokens = self.transform(patch_tokens)
-
-        return {
-            'features': patch_embeddings,
-            'mask': patch_tokens,
-            'slide_id': feat_slide_name.replace(".h5", ""),
-            'coords': patch_coords
-        }
-
+        train_dataset = torch.utils.data.Subset(train_dataset_full, train_indices)
+        val_dataset = torch.utils.data.Subset(test_dataset_full, test_indices)
+        
+        train_loader = DataLoader(
+            train_dataset,
+            batch_size=BATCH_SIZE,
+            shuffle=True,
+            num_workers=NUM_WORKERS 
+        )
+        
+        val_loader = DataLoader(
+            val_dataset,
+            batch_size=BATCH_SIZE,
+            shuffle=False,
+            num_workers=NUM_WORKERS
+        )
+        
+        # Train
+        train_loss = train(model, train_loader, criterion, optimizer, device)
+        print(f"Training Loss: {train_loss:.4f}")
+        
+        # Validate
+        val_loss = validate(model, val_loader, criterion, device)
+        print(f"Validation Loss: {val_loss:.4f}")
+        
+        # Track losses
+        train_losses.append(train_loss)
+        val_losses.append(val_loss)
+        
+        # Learning rate scheduling
+        scheduler.step()
+        
+        # Save best model
+        if val_loss < best_val_loss:
+            best_val_loss = val_loss
+            checkpoint_path = os.path.join(checkpoint_dir, f'{run_name}_best_model.pth')
+            torch.save({
+                'epoch': epoch,
+                'model_state_dict': model.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'train_loss': train_loss,
+                'val_loss': val_loss,
+            }, checkpoint_path)
+            print(f"Saved best model (val_loss: {val_loss:.4f})")
+    
+    print("\n" + "="*60)
+    print("Training complete!")
+    print(f"Best validation loss: {best_val_loss:.4f}")
+    print("="*60)
+    
+    # Plot and save losses
+    plot_losses(train_losses, val_losses, run_name, results_dir)
+    
+    # Evaluate segmentation metrics on validation set
+    class_names = ['background', 'normal_tissue', 'tumor']
+    metrics = evaluate_metrics(
+        model=model,
+        dataloader=val_loader,
+        num_classes=NUM_CLASSES,
+        device=device,
+        ignore_index=0
+    )
+    
+    # Print metrics
+    print_metrics(metrics, class_names=class_names)
 
 if __name__ == '__main__':
-    dataset = CAMELYON16Dataset('/home/nadun/wd/datasets/camelyon16/test')
-    print("#"*30)
-    print(len(dataset))
-    sample = dataset[0]
-    print(sample['features'].shape)
-    print(sample['mask'].shape)
-    print(sample['slide_id'])
-    print(sample['coords'])
+    main()
