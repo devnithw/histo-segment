@@ -114,11 +114,13 @@ def evaluate_metrics(model, dataloader, num_classes, device='cuda'):
     
     with torch.no_grad():
         for batch_idx, batch in enumerate(tqdm(dataloader, desc="Computing metrics")):
-            features = batch['features'].to(device)
+            tokens = batch['tokens'].to(device)   # [B, 768, 16, 16]
             masks = batch['mask'].to(device)
             
             # Forward pass
-            outputs = model(features)
+            with torch.autocast(device_type='cuda', dtype=torch.float16,
+                                enabled=(str(device) != 'cpu')):
+                outputs = model(tokens)
             
             # Get predictions (argmax over class dimension)
             preds = torch.argmax(outputs, dim=1)  # (B, H, W)
@@ -141,7 +143,7 @@ def evaluate_metrics(model, dataloader, num_classes, device='cuda'):
                 union_sum[class_idx] += union
             
             # Free memory after each batch
-            del features, masks, outputs, preds
+            del tokens, masks, outputs, preds
             if device == 'cuda' and batch_idx % 10 == 0:
                 torch.cuda.empty_cache()
     
@@ -197,10 +199,65 @@ def print_metrics(metrics, class_names=None):
 #can download from aws s3 cp --recursive --no-sign-request s3://camelyon-dataset/CAMELYON16/masks/ ./raw/  # 8.76GB
 
 if __name__ == "__main__":
-    # files = glob.glob("/home/nadun/wd/datasets/camelyon16/camelyon16_test/images/*.tif")
-    # xml_path = lambda file_name: f"/home/nadun/wd/datasets/camelyon16/camelyon16_test/annotations/{file_name}.xml"
-    # print(f"{len(files)} image files")
-    # for file in files[19:]:
+    import sys
+    sys.path.insert(0, '/mnt/hdd4tb/segmentation')
+
+    import torch
+    from torch.utils.data import DataLoader
+    from dataset import CAMELYON16MultiSlideDataset
+    from model import SingleScaleDecoder
+
+    # ── Config (must match train.py) ──────────────────────────────────────────
+    CHECKPOINT   = '/home/nadun/wd/segmentation/checkpoints/camelyon16/run_05-02-01-49_best_model.pth'
+    FEATURE_DIR  = '/home/nadun/wd/datasets/camelyon16/test/trident/20x_512px_0px_overlap/features_conch_v1_dual'
+    MASK_DIR     = '/home/nadun/wd/datasets/camelyon16/test/patched_masks'
+    NUM_CLASSES  = 2
+    TOKEN_DIM    = 768
+    OUTPUT_SIZE  = (512, 512)
+    BATCH_SIZE   = 4
+    CLASS_NAMES  = ['normal', 'tumor']
+
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    print(f"Device: {device}")
+
+    # ── Rebuild the exact same val split as training ──────────────────────────
+    print("Loading dataset...")
+    full_dataset = CAMELYON16MultiSlideDataset(feature_dir=FEATURE_DIR, mask_dir=MASK_DIR)
+    subset_size  = int(0.001 * len(full_dataset))
+    train_size   = int(0.8 * subset_size)
+    val_size     = subset_size - train_size
+    remainder    = len(full_dataset) - train_size - val_size
+    _, val_dataset, _ = torch.utils.data.random_split(
+        full_dataset,
+        [train_size, val_size, remainder],
+        generator=torch.Generator().manual_seed(42),
+    )
+    print(f"Val patches: {len(val_dataset)}")
+
+    val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=2)
+
+    # ── Load model ────────────────────────────────────────────────────────────
+    print(f"Loading checkpoint: {CHECKPOINT}")
+    model = SingleScaleDecoder(
+        in_channels=TOKEN_DIM,
+        num_classes=NUM_CLASSES,
+        input_size=OUTPUT_SIZE,
+    ).to(device)
+
+    # Force lazy initialization of upsample blocks before loading weights
+    # Assuming input token map size is 16x16 (for 512x512 patches with 16x16 patch size)
+    dummy_input = torch.zeros(1, TOKEN_DIM, 16, 16, device=device)
+    with torch.no_grad():
+        model(dummy_input)
+
+    ckpt = torch.load(CHECKPOINT, map_location=device, weights_only=True)
+    model.load_state_dict(ckpt['model_state_dict'])
+    print(f"  Loaded from epoch {ckpt['epoch']}  (val_loss={ckpt['val_loss']:.4f})")
+
+    # ── Evaluate ──────────────────────────────────────────────────────────────
+    metrics = evaluate_metrics(model, val_loader, NUM_CLASSES, device)
+    print_metrics(metrics, class_names=CLASS_NAMES)
+
     #     #extract file name without extension
     #     file_name = os.path.basename(file).split('.')[0]
     #     annotation_file = xml_path(file_name)
@@ -210,4 +267,4 @@ if __name__ == "__main__":
     #     else:
     #         print(f"Annotation file not found for {file_name}, skipping...")
 
-
+    pass

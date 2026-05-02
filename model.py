@@ -91,7 +91,7 @@ class SingleScaleDecoder(nn.Module):
 
 if __name__ == '__main__':
     # Test the model
-    model = SingleScaleDecoder(in_channels=768, num_classes=4, input_size=(512, 512))
+    model = SingleScaleDecoder(in_channels=768, num_classes=2, input_size=(512, 512))
     
     # Test with dummy input
     dummy = torch.randn(2, 768, 16, 16)  # Batch of 2, 768 channels, 16x16 spatial
@@ -99,5 +99,5 @@ if __name__ == '__main__':
     
     print(f"Input shape: {dummy.shape}")
     print(f"Output shape: {output.shape}")
-    print(f"Expected output shape: [2, 4, 512, 512]")
+    print(f"Expected output shape: [2, 2, 512, 512]")
     print(f"Model parameters: {sum(p.numel() for p in model.parameters()):,}")
