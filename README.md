@@ -1,151 +1,99 @@
-# SICAP Segmentation Pipeline
+# CAMELYON16 WSI Segmentation Pipeline
 
 ## Overview
-This pipeline trains a segmentation model using pre-extracted CONCH features from SICAP patch images. The model learns to upsample 512-dimensional CONCH embeddings to 512x512 segmentation masks.
+This pipeline trains a segmentation model using pre-extracted CONCH visual tokens from CAMELYON16 Whole Slide Images (WSIs). The model learns to upsample `768`-dimensional 2D CONCH token grids (`16x16`) into high-resolution `512x512` segmentation masks. It includes a complete flow for training, patch-level inference, and stitching patches back into contiguous WSI masks for evaluation.
 
 ## Architecture
 
 ### Model Components
 
-1. **UNetDecoder** (`model.py`)
-   - Standalone decoder class for modular design
-   - Progressive upsampling with skip connections
-   - 4 upsampling blocks: 32x32 → 64x64 → 128x128 → 256x256 → 512x512
-   - Each block: Upsample → Conv → BatchNorm → ReLU → Conv → BatchNorm → ReLU
-   - Final 1x1 conv for class prediction
-
-2. **ModaSegNet** (`model.py`)
-   - Complete segmentation model
+1. **SingleScaleDecoder** (`model.py`)
+   - Minimal single-scale decoder for foundational model features.
+   - Progressive upsampling path with skip-like logic.
+   - Upsamples `[B, 768, 16, 16]` tokens to `[B, num_classes, 512, 512]`.
    - Pipeline:
-     - Input: [B, 512] CONCH features
-     - Linear projection: [B, 512]
-     - Reshape to spatial: [B, 512, 1, 1]
-     - Initial conv: [B, 512, 1, 1]
-     - Interpolate to: [B, 512, 32, 32]
-     - UNetDecoder: [B, 512, 32, 32] → [B, 4, 512, 512]
-     - Output: [B, num_classes, 512, 512]
-   - Modular design allows easy decoder replacement
+     - Input: `[B, 768, 16, 16]` CONCH tokens.
+     - Width projection (1x1 conv) to `head_dim` (e.g., 256).
+     - Successive upsampling blocks (Bilinear Interpolation + 3x3 Conv + ReLU).
+     - Final 1x1 conv for class prediction.
 
 ### Dataset
 
-**SICAPFeatureDataset** (`dataset.py`)
-- Loads pre-extracted `.pt` feature files
-- Loads corresponding `.jpg` mask files
+**CAMELYON16_Slide_Dataset & CAMELYON16MultiSlideDataset** (`dataset.py`)
+- Designed to handle massive `.h5` files containing WSI patches.
+- Solves severe mechanical HDD I/O bottlenecks:
+  - Uses `128MB` chunk caches (`rdcc_nbytes=1024*1024*128`) to mitigate HDF5 chunking inefficiencies.
+  - Sorts indices in training/validation to ensure sequential disk reads, speeding up I/O by orders of magnitude.
 - Returns:
-  - `features`: [512] tensor (CONCH embeddings)
-  - `mask`: [512, 512] tensor (ground truth segmentation)
-  - `filename`: patch name
-  - `slide_id`: slide identifier for stitching
-
-**SICAPMultiSlideDataset** (`dataset.py`)
-- Combines multiple slides into single dataset
-- Handles all slides in the features directory
-- Maintains slide_id for each sample
+  - `features`: `[512]` tensor (pooled embeddings).
+  - `tokens`: `[768, 16, 16]` tensor (visual tokens).
+  - `mask`: `[512, 512]` tensor (ground truth from PNGs).
+  - `coords`: `[2]` tensor (Level 0 x,y coordinates).
+  - `slide_id`: Slide identifier for tracking.
 
 ## File Structure
 
 ```
 /home/nadun/wd/segmentation/
-├── model.py              # Model definitions (UNetDecoder, ModaSegNet)
-├── dataset.py            # PyTorch dataset classes
-├── train.py              # Training script
-├── extract_features.py   # CONCH feature extraction
-└── checkpoints/          # Model checkpoints (created during training)
+├── model.py              # SingleScaleDecoder architecture
+├── dataset.py            # HDF5-optimized PyTorch dataset classes
+├── train.py              # Training script with sequential I/O optimization
+├── inference.py          # Fast patch-level inference script
+├── stitch.py             # Stitches patch masks into full WSI TIFFs
+├── loss.py               # Combined CrossEntropy + Dice Loss (CEDiceLoss)
+├── engine.py             # Training and validation loops
+├── utils.py              # Metrics (F1, Dice, IoU, etc.) and plotting
+└── checkpoints/          # Model checkpoints
 ```
 
 ## Configuration
 
 ### Training Parameters (in `train.py`)
 - **Batch size**: 16
-- **Epochs**: 50
+- **Epochs**: 8
 - **Learning rate**: 1e-3
 - **Optimizer**: Adam
-- **Loss function**: CrossEntropyLoss
-- **LR Scheduler**: ReduceLROnPlateau (factor=0.5, patience=5)
-- **Train/Val split**: 80/20
-- **Num classes**: 4
+- **Loss function**: CEDiceLoss
+- **LR Scheduler**: CosineAnnealingLR (eta_min=7.5e-5)
+- **Train/Val subset**: Dynamic subset ratios (e.g., 0.05 / 0.001) with sequential sorting.
+- **Num classes**: 3 (Background, Normal Tissue, Tumor)
 
 ### Model Parameters
-- **Feature dimension**: 512 (CONCH output)
-- **Output size**: 512x512
-- **Number of classes**: 4
-- **Decoder channels**: (256, 128, 64, 32)
+- **Input Tokens**: `[768, 16, 16]` (CONCH token output)
+- **Output size**: `512x512`
 
 ## Usage
 
-### 1. Extract Features (Already Done)
+### 1. Train Model
 ```bash
-conda activate conch
-cd /home/nadun/wd/segmentation
-python extract_features.py
-```
-
-### 2. Test Dataset
-```bash
-conda activate conch
-python dataset.py
-```
-
-### 3. Test Model
-```bash
-conda activate conch
-python model.py
-```
-
-### 4. Train Model
-```bash
-conda activate conch
+conda activate vlm
 python train.py
 ```
+*Note: Ensure `HDF5_USE_FILE_LOCKING=FALSE` is set to prevent multi-processing deadlocks (handled automatically in `train.py`).*
 
-## Training Process
+### 2. Run Inference
+```bash
+conda activate vlm
+python inference.py
+```
+Generates patch-level predictions as `.png` files in `inference_results/patched_masks/`. Uses ThreadPoolExecutor to prevent disk writes from blocking the GPU.
 
-The training script will:
-1. Load all available slides from the features directory
-2. Split data into 80% train, 20% validation
-3. Train for 50 epochs with progress bars
-4. Save best model based on validation loss
-5. Save checkpoints every 10 epochs
-6. Apply learning rate scheduling based on validation loss
+### 3. Stitch WSI Masks
+```bash
+conda activate vlm
+python stitch.py
+```
+Takes the predicted `.png` patches and reconstructs them into a seamless WSI `.tif` mask using ASAP's `MultiResolutionImageWriter`. 
+- Automatically calculates coordinate scale factors (e.g., 20x vs 40x).
+- Performs full WSI-level Dice score evaluation against ground truth masks.
 
-### Checkpoints
-- **best_model.pth**: Best model based on validation loss
-- **checkpoint_epoch_N.pth**: Checkpoints every 10 epochs
+## Evaluation Metrics
+The pipeline computes and tracks:
+- **Dice Score** (Patch-level & WSI-level)
+- **IoU (Intersection over Union)**
+- **Precision, Recall, Specificity**
+- **F1-Score** (Per-class and Macro-averaged)
 
-Each checkpoint contains:
-- `epoch`: Current epoch number
-- `model_state_dict`: Model weights
-- `optimizer_state_dict`: Optimizer state
-- `train_loss`: Training loss
-- `val_loss`: Validation loss
-
-## Dataset Statistics
-
-- **Current dataset**: 1 slide (16B0001851)
-- **Total patches**: 55
-- **Feature shape**: [512]
-- **Mask shape**: [512, 512]
-- **Mask dtype**: int64
-- **Unique classes per mask**: ~100-111 values
-
-## Model Statistics
-
-- **Total parameters**: ~3-5M (approximate)
-- **Input**: [B, 512] CONCH features
-- **Output**: [B, 4, 512, 512] segmentation logits
-
-## Notes
-
-1. **Slide ID tracking**: Each sample includes `slide_id` for later patch stitching
-2. **Modular design**: UNetDecoder is separate, allowing easy replacement with other decoders
-3. **Memory efficient**: Features are pre-extracted, avoiding repeated CONCH inference
-4. **Scalable**: Dataset automatically handles all slides in the features directory
-
-## Future Extensions
-
-1. Extract features for all slides (currently only 16B0001851)
-2. Implement patch stitching to reconstruct full WSI segmentation
-3. Add evaluation metrics (IoU, Dice, etc.)
-4. Experiment with different decoder architectures
-5. Add data augmentation
-6. Implement inference script for new slides
+## Important Optimizations
+- **Sequential Disk Reads**: Mechanical HDD thrashing was eliminated by disabling `shuffle=True` and sorting subset indices.
+- **HDF5 Chunk Caching**: HDF5 cache was increased from 1MB to 128MB per file to handle massive non-contiguous gzip chunks without repeatedly decompressing the same data.
