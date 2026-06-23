@@ -99,16 +99,43 @@ def patchify_masks(file_path, split='train'):
         output_path = f"/home/nadun/wd/datasets/camelyon16/{split}/patched_masks/{file_name}/{idx}_{x}_{y}.png"
         Image.fromarray(patch).save(output_path)
 
+
+def patchify_image_for_visual(file_name):
+    reader = mir.MultiResolutionImageReader()
+    img = reader.open(file_name)
+    width, height = img.getDimensions()
+    patch_width = width//8
+    patch_height = height//6
+    for y in range(0, height, patch_height):
+        for x in range(0, width, patch_width):
+            print(f"Processing patch at ({x}, {y}) with size ({patch_width}, {patch_height})")
+            w = min(patch_width, width - x)
+            h = min(patch_height, height - y)
+
+            patch = img.getUCharPatch(x, y, w, h, 0)  # level 0
+            patch = np.array(patch).reshape((h, w, 3))
+
+            # downsample before saving (factor 2)
+            pil_img = Image.fromarray(patch)
+            down_w, down_h = max(1, w // 8), max(1, h // 8)
+            down = min(down_w, down_h)
+            pil_img = pil_img.resize((down, down), Image.BILINEAR)
+
+            output_path = f"/home/nadun/wd/segmentation/visualizations/{os.path.basename(file_name).split('.')[0]}_{x}_{y}.png"
+            pil_img.save(output_path)
+
+
 if __name__ == "__main__":
-    split = 'train'
-    file_names = glob.glob(f"/home/nadun/wd/datasets/camelyon16/{split}/images/*.tif")
-    for file_name in tqdm.tqdm(file_names):
-        try:
-            patchify_masks(file_name, split=split)
-        except Exception as e:
-            print(f"Error processing {file_name}: {e}")
-            continue
-    print("Done patchifying masks.")
+    # split = 'train'
+    # file_names = glob.glob(f"/home/nadun/wd/datasets/camelyon16/{split}/images/*.tif")
+    # for file_name in tqdm.tqdm(file_names):
+    #     try:
+    #         patchify_masks(file_name, split=split)
+    #     except Exception as e:
+    #         print(f"Error processing {file_name}: {e}")
+    #         continue
+    # print("Done patchifying masks.")
     # mask_path = "/home/nadun/wd/datasets/camelyon16/train/masks/normal_003_mask.tif"
     # num0s, num1s, num2s, num255s = unique_values_in_mask(mask_path)
     # print(f"Unique value counts in mask: 0s={num0s}, 1s={num1s}, 2s={num2s}, 255s={num255s}")
+    patchify_image_for_visual('/home/nadun/wd/datasets/camelyon16/test/images/test_001.tif')

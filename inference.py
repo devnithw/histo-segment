@@ -128,10 +128,10 @@ def main(input_wsi, model_checkpoint, output_dir, batch_size, num_classes, num_w
     print(f"\nInference complete! Saved {len(dataset)} patches to {output_dir}/")
 
 if __name__ == '__main__':
-    h5_path="/home/nadun/wd/datasets/camelyon16/test/trident/20x_512px_0px_overlap/features_conch_v1_dual/test_046.h5"
-    checkpoint="/home/nadun/wd/segmentation/checkpoints/camelyon16/run_05-02-23-56_best_model.pth"
+    h5_path="/home/nadun/wd/datasets/camelyon16/test/trident/20x_512px_0px_overlap/features_conch_v1_dual/test_001.h5"
+    checkpoint="/home/nadun/wd/segmentation/checkpoints/camelyon16/run_05-03-02-47_bs16_ep7_lr0.001/best_model.pth"
     output_dir="/home/nadun/wd/segmentation/inference_results/patched_masks"
-    batch_size=4 
+    batch_size=16 
     num_workers=4 
     num_classes=3
     

@@ -12,8 +12,8 @@ def train(model, dataloader, criterion, optimizer, device):
 
     pbar = tqdm(dataloader, desc='Training', leave=False, dynamic_ncols=True, mininterval=1.0)
     for batch in pbar:
-        tokens = batch['tokens'].to(device)   # [B, 768, 16, 16]
-        masks = batch['mask'].to(device)       # [B, 512, 512]
+        tokens = batch['tokens'].to(device, non_blocking=True)   # [B, 768, 16, 16]
+        masks = batch['mask'].to(device, non_blocking=True)       # [B, 512, 512]
 
         optimizer.zero_grad()
         with torch.autocast(device_type='cuda', dtype=torch.float16,
@@ -25,9 +25,10 @@ def train(model, dataloader, criterion, optimizer, device):
         scaler.step(optimizer)
         scaler.update()
 
-        total_loss += loss.item()
+        l = loss.item()
+        total_loss += l
         num_batches += 1
-        pbar.set_postfix({'loss': f'{loss.item():.4f}'})
+        pbar.set_postfix({'loss': f'{l:.4f}'})
 
     return total_loss / num_batches
 
@@ -37,19 +38,20 @@ def validate(model, dataloader, criterion, device):
     total_loss = 0.0
     num_batches = 0
 
-    with torch.no_grad():
+    with torch.inference_mode():
         pbar = tqdm(dataloader, desc='Validation', leave=False, dynamic_ncols=True, mininterval=1.0)
         for batch in pbar:
-            tokens = batch['tokens'].to(device)   # [B, 768, 16, 16]
-            masks = batch['mask'].to(device)       # [B, 512, 512]
+            tokens = batch['tokens'].to(device, non_blocking=True)   # [B, 768, 16, 16]
+            masks = batch['mask'].to(device, non_blocking=True)       # [B, 512, 512]
 
             with torch.autocast(device_type='cuda', dtype=torch.float16,
                                 enabled=(device.type == 'cuda')):
                 outputs = model(tokens)            # [B, num_classes, 512, 512]
                 loss = criterion(outputs, masks)
 
-            total_loss += loss.item()
+            l = loss.item()
+            total_loss += l
             num_batches += 1
-            pbar.set_postfix({'loss': f'{loss.item():.4f}'})
+            pbar.set_postfix({'loss': f'{l:.4f}'})
 
     return total_loss / num_batches

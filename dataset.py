@@ -152,20 +152,26 @@ class CAMELYON16_Slide_Dataset(Dataset):
         self.h5_path   = Path(h5_path)
         self.slide_id  = self.h5_path.stem
         self.transform = torchvision.transforms.Compose(transform) if transform else None
+        self.h5_file   = None
 
-        # Read patch count without loading data
-        with h5py.File(self.h5_path, 'r') as f:
+        # Read patch count without loading data, use large cache just in case
+        with h5py.File(self.h5_path, 'r', rdcc_nbytes=1024*1024*128, rdcc_nslots=10007) as f:
             self.n_patches = f['tokens'].shape[0]
 
     def __len__(self):
         return self.n_patches
 
     def __getitem__(self, idx):
-        # Single-row read — avoids loading the full slide into RAM
-        with h5py.File(self.h5_path, 'r') as f:
-            features = torch.from_numpy(f['embeddings'][idx].astype(np.float32))  # [512]
-            tokens   = torch.from_numpy(f['tokens'][idx].astype(np.float32))      # [768, 16, 16]
-            coords   = torch.from_numpy(f['coords'][idx])                          # [2]
+        # Open the file once per worker to prevent massive IO overhead
+        # CRITICAL FIX: The HDF5 files are chunked poorly (114, 96, 2, 2) which causes massive 
+        # disk thrashing. We MUST increase the chunk cache (rdcc_nbytes) to 128MB so that it 
+        # doesn't re-read and re-decompress the same 512 chunks for 114 consecutive patches!
+        if self.h5_file is None:
+            self.h5_file = h5py.File(self.h5_path, 'r', rdcc_nbytes=1024*1024*128, rdcc_nslots=10007)
+            
+        features = torch.from_numpy(self.h5_file['embeddings'][idx].astype(np.float32))  # [512]
+        tokens   = torch.from_numpy(self.h5_file['tokens'][idx].astype(np.float32))      # [768, 16, 16]
+        coords   = torch.from_numpy(self.h5_file['coords'][idx])                          # [2]
 
         img = Image.open(f"{self.mask_dir}/{self.slide_id}/{idx}_{coords[0]}_{coords[1]}.png")
         mask = np.array(img, dtype=np.int64)  # Convert to numpy array

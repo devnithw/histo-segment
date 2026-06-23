@@ -1,8 +1,9 @@
+import os, glob
+os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
-import os, glob
 from pathlib import Path
 from datetime import datetime
 import matplotlib.pyplot as plt
@@ -32,8 +33,8 @@ def main():
     # Hyperparameters
     BATCH_SIZE = 16
     EPOCHS = 8
-    TRAIN_SUBSET_RATIO = 0.0001 #0.05
-    TEST_SUBSET_RATIO = 0.01
+    TRAIN_SUBSET_RATIO = 0.05
+    TEST_SUBSET_RATIO = 0.001
     LEARNING_RATE = 1e-3
     NUM_CLASSES = 3
     NUM_WORKERS = 8
@@ -85,6 +86,9 @@ def main():
     train_indices = torch.randperm(len(train_dataset_full))[:train_subset_count]
     test_indices = torch.randperm(len(test_dataset_full))[:test_subset_count]
     
+    # Sort test_indices to ensure sequential reading from HDD (massive speedup for validation)
+    test_indices, _ = torch.sort(test_indices)
+    
     train_dataset = torch.utils.data.Subset(train_dataset_full, train_indices)
     val_dataset = torch.utils.data.Subset(test_dataset_full, test_indices)
 
@@ -115,11 +119,11 @@ def main():
     scheduler = optim.lr_scheduler.CosineAnnealingLR(
         optimizer,
         T_max=EPOCHS,
-        eta_min=1e-6
+        eta_min=7.5e-5
     )
     
     # Create run-specific checkpoint directory with args in name
-    run_name = f"{base_run_name}_bs{BATCH_SIZE}_ep{EPOCHS}_lr{LEARNING_RATE}"
+    run_name = f"{base_run_name}_dstrain{TRAIN_SUBSET_RATIO}_dstest{TEST_SUBSET_RATIO}_bs{BATCH_SIZE}_ep{EPOCHS}"
     checkpoint_dir = os.path.join(base_checkpoint_dir, run_name)
     Path(checkpoint_dir).mkdir(parents=True, exist_ok=True)
     print(f"\nCheckpoints will be saved to: {checkpoint_dir}")
@@ -141,6 +145,9 @@ def main():
         train_indices = torch.randperm(len(train_dataset_full))[:train_subset_count]
         test_indices = torch.randperm(len(test_dataset_full))[:test_subset_count]
         
+        # Sort test_indices to ensure sequential reading from HDD during validation
+        test_indices, _ = torch.sort(test_indices)
+        
         train_dataset = torch.utils.data.Subset(train_dataset_full, train_indices)
         val_dataset = torch.utils.data.Subset(test_dataset_full, test_indices)
         
@@ -155,7 +162,7 @@ def main():
             val_dataset,
             batch_size=BATCH_SIZE,
             shuffle=False,
-            num_workers=NUM_WORKERS
+            num_workers=0  # MUST be 0 for HDD sequential reads to work properly
         )
         
         # Train
